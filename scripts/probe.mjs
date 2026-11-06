@@ -1,18 +1,16 @@
-// 协议取证脚本：不经 magpie，直接验证网关/上游的契约。
+// 协议取证脚本：不经 magpie，直接验证上游 api.deepai.org 的契约。
 //
-//   node scripts/probe.mjs --mode gateway [--url http://127.0.0.1:10087] [--key …] [--admin …]
-//   node scripts/probe.mjs --mode direct  [--key …] [--secret-dir …] [--base https://api.deepai.org]
+//   node scripts/probe.mjs [--key …] [--secret-dir …] [--base https://api.deepai.org]
 //
 // 输出每一步的“阶段 / 状态 / 原话 / 耗时”，全程脱敏（Key 只留前 6 后 4）。
 
 import { findDesktopCredentials } from "../src/credentials.mjs";
-import { exchangeCode, getDirectModels, getTheos, getUsageSummary, normalizeAllowance } from "../src/direct.mjs";
-import { aggregatePool, getAccounts, getHealth, getModels, getOverview, postCheckin, singleAllowance } from "../src/gateway.mjs";
+import { getDirectModels, getTheos, getUsageSummary, normalizeAllowance } from "../src/direct.mjs";
 import { resolveMachineFingerprint } from "../src/machine.mjs";
-import { formatNumber, parseResetTime, trimSlash } from "../src/util.mjs";
+import { trimSlash } from "../src/util.mjs";
 
 function parseArgs(argv) {
-  const out = { mode: "gateway", checkin: false, chat: false };
+  const out = { checkin: false, chat: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--checkin") out.checkin = true;
@@ -42,6 +40,21 @@ function step(name, detail) {
   for (const [k, v] of Object.entries(detail ?? {})) console.log(`  ${k}: ${v}`);
 }
 
+async function timed(name, fn) {
+  const start = Date.now();
+  try {
+    const out = await fn();
+    console.log(`  (${name} ${Date.now() - start}ms)`);
+    return out;
+  } catch (err) {
+    throw err;
+  }
+}
+
+function fail(name, err) {
+  console.log(`  ✖ ${name}: HTTP ${err?.status ?? "-"} ${err?.message ?? err}`);
+}
+
 async function runDirect(args) {
   const origin = trimSlash(args.base || "https://api.deepai.org");
   let key = String(args.key ?? "").trim();
@@ -65,8 +78,8 @@ async function runDirect(args) {
   }
   step("credentials", { source, key: maskKey(key), username: username || "(empty)" });
 
-  const machineFp = resolveMachineFingerprint({ apiKey: key, machineMode: String(args.machine ?? "account") });
-  step("machine", { fingerprint: maskFp(machineFp), mode: String(args.machine ?? "account") });
+  const machineFp = resolveMachineFingerprint();
+  step("machine", { fingerprint: maskFp(machineFp), source: "device" });
 
   let code = 0;
   await timed("models", async () => {
@@ -132,108 +145,6 @@ async function runDirect(args) {
   return code;
 }
 
-async function runGateway(args) {
-  const url = trimSlash(args.url || "http://127.0.0.1:10087");
-  const key = String(args.key ?? "").trim();
-  const admin = String(args.admin ?? "").trim();
-  let code = 0;
-
-  step("config", { url, key: maskKey(key), admin: admin ? "(set)" : "(empty)" });
-
-  await timed("health", async () => {
-    const health = await getHealth(url);
-    step("health", {
-      status: health?.status ?? "(none)",
-      accounts: health?.accounts ?? "(none)",
-      ready: health?.ready ?? "(none)",
-      models: health?.models ?? "(none)",
-      default_model: health?.default_model ?? "(none)",
-      machine_ready: health?.machine_ready ?? "(none)",
-    });
-  }).catch((err) => { code = 1; fail("health", err); });
-
-  await timed("models", async () => {
-    const payload = await getModels(url, { key });
-    const data = payload?.data ?? [];
-    step("models", { count: data.length, first: data[0]?.id ?? "(none)" });
-  }).catch((err) => { code = 1; fail("models", err); });
-
-  await timed("theos", async () => {
-    const payload = await fetch(`${url}/v1/deepai/theos`, {
-      headers: key ? { Authorization: `Bearer ${key}` } : {},
-      redirect: "error",
-    }).then(async (res) => ({ status: res.status, body: await res.text() }));
-    if (payload.status !== 200) throw new Error(`HTTP ${payload.status}: ${payload.body.slice(0, 200)}`);
-    const allowance = singleAllowance(JSON.parse(payload.body));
-    step("theos", {
-      account: allowance.account || "(none)",
-      username: allowance.username || "(none)",
-      balance: allowance.balance || "(none)",
-      granted: allowance.granted || "(none)",
-      refresh_at: allowance.refreshAt ?? "(none)",
-    });
-  }).catch((err) => { code = 1; fail("theos", err); });
-
-  if (admin) {
-    await timed("overview", async () => {
-      const overview = await getOverview(url, { admin });
-      step("overview", {
-        accounts: overview?.accounts ?? "(none)",
-        ready: overview?.ready ?? "(none)",
-        default_model: overview?.default_model ?? "(none)",
-        upstream: overview?.upstream ?? "(none)",
-      });
-    }).catch((err) => { code = 1; fail("overview", err); });
-
-    await timed("accounts", async () => {
-      const items = await getAccounts(url, { admin });
-      const pool = aggregatePool(items);
-      step("pool", {
-        total: pool.total,
-        able: pool.enabled,
-        with_quota: pool.withQuota,
-        errors: pool.errored,
-        sum_balance: formatNumber(pool.sumBalance),
-        sum_granted: formatNumber(pool.sumGranted),
-        earliest_reset: pool.earliestResetAt ?? "(none)",
-      });
-    }).catch((err) => { code = 1; fail("accounts", err); });
-
-    if (args.checkin) {
-      await timed("checkin", async () => {
-        const payload = await postCheckin(url, { admin });
-        const results = payload?.results ?? [];
-        step("checkin", {
-          ok: payload?.ok ?? "(none)",
-          accounts: results.length,
-          ok_count: results.filter((r) => r.ok).length,
-          with_quota: results.filter((r) => Number(r?.theos?.balance ?? 0) > 0).length,
-        });
-      }).catch((err) => { code = 1; fail("checkin", err); });
-    }
-  } else {
-    console.log("\n[admin] 未提供 --admin：跳过池级额度与签到（这是预期行为）。");
-  }
-
-  return code;
-}
-
-async function timed(name, fn) {
-  const start = Date.now();
-  try {
-    const out = await fn();
-    console.log(`  (${name} ${Date.now() - start}ms)`);
-    return out;
-  } catch (err) {
-    throw err;
-  }
-}
-
-function fail(name, err) {
-  console.log(`  ✖ ${name}: HTTP ${err?.status ?? "-"} ${err?.message ?? err}`);
-}
-
-const args = parseArgs(process.argv.slice(2));
 console.log("DeepAI Code probe — 全程脱敏，不写入任何文件");
-const code = args.mode === "direct" ? await runDirect(args) : await runGateway(args);
+const code = await runDirect(parseArgs(process.argv.slice(2)));
 process.exitCode = code; // 不立即 exit，避免 windows 上 undici 连接未收尾触发 libuv 断言

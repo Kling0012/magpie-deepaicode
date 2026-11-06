@@ -1,23 +1,21 @@
-// 登录：四种方式（网关 / 桌面端凭据 / 粘贴 Key / 浏览器 + localhost 回调）。
+// 登录：三种方式（浏览器 + localhost 回调 / 桌面端凭据 / 粘贴 Key）。
 //
 // 关于 authorize(inputs)：inputs 里既可能有 prompts 的回答，也可能有 magpie
 // 自己的 key 输入框内容。这里用 pickKey 兜住几种可能的字段名，取不到就按
 // “没有输入 key”处理（桌面端凭据 / 浏览器登录本来就不需要用户填 key）。
+//
+// 调试日志只记录“哪些字段有值”，绝不打印字段内容（里面可能有 Key）。
 
 import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
 
-import {
-  DEFAULT_BASE_ORIGIN,
-  DEFAULT_GATEWAY_URL,
-} from "./constants.mjs";
+import { DEFAULT_BASE_ORIGIN } from "./constants.mjs";
 import { findDesktopCredentials } from "./credentials.mjs";
 import { getTheos, exchangeCode, normalizeAllowance } from "./direct.mjs";
-import { getHealth, getModels } from "./gateway.mjs";
 import { HttpError } from "./http.mjs";
 import { resolveLang, t } from "./i18n.mjs";
-import { accountMachineId, resolveMachineFingerprint, sha256Hex } from "./machine.mjs";
-import { accountIdFor, LOOPBACK_KEY } from "./modes.mjs";
+import { resolveMachineFingerprint } from "./machine.mjs";
+import { accountIdFor } from "./modes.mjs";
 import { trimSlash } from "./util.mjs";
 
 const VERIFY_TIMEOUT_MS = 15_000;
@@ -25,34 +23,30 @@ const VERIFY_TIMEOUT_MS = 15_000;
 const CALLBACK_TIMEOUT_MS = 180_000;
 
 function pickKey(inputs) {
-  for (const name of ["key", "apiKey", "gatewayKey", "token", "secret", "api_key"]) {
+  for (const name of ["key", "apiKey", "token", "secret", "api_key"]) {
     const value = inputs?.[name];
     if (typeof value === "string" && value.trim()) return value.trim();
   }
   return "";
 }
 
-function isValidUrl(value) {
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
-    return false;
-  }
+/** debug 日志用：只列出有值的字段名，不泄露内容。 */
+function inputShape(inputs) {
+  const names = Object.entries(inputs ?? {})
+    .filter(([, v]) => v !== undefined && v !== null && String(v).trim() !== "")
+    .map(([k]) => k);
+  return names.length > 0 ? `fields present: ${names.join(", ")}` : "no input fields";
 }
 
 /** 直连模式的验活：/theos。只有鉴权类错误才判登录失败，网络抖动放行。 */
-async function verifyDirectKey(origin, { key, machineMode, fetchImpl, lang }) {
-  const machineFp = resolveMachineFingerprint({ apiKey: key, machineMode });
+async function verifyDirectKey(origin, { key, fetchImpl, lang }) {
+  const machineFp = resolveMachineFingerprint();
   try {
     const payload = await getTheos(origin, { key, machineFp, fetchImpl, timeoutMs: VERIFY_TIMEOUT_MS });
     return { ok: true, allowance: normalizeAllowance(payload) };
   } catch (err) {
     if (err instanceof HttpError && [401, 403].includes(err.status)) {
-      const message = err.status === 401
-        ? t(lang, "errSignInExpired")
-        : t(lang, "errKeyMissing");
-      return { ok: false, error: message, status: err.status };
+      return { ok: false, error: t(lang, "errSignInExpired"), status: err.status };
     }
     // 426（车道版本）是插件选项问题，值得直接告诉用户
     if (err instanceof HttpError && err.status === 426) {
@@ -63,7 +57,7 @@ async function verifyDirectKey(origin, { key, machineMode, fetchImpl, lang }) {
   }
 }
 
-function directSuccess({ cred, source, options, accountId }) {
+function directSuccess({ cred, source, accountId }) {
   return {
     type: "success",
     key: cred.apiKey,
@@ -72,86 +66,11 @@ function directSuccess({ cred, source, options, accountId }) {
       mode: "direct",
       username: cred.username || "",
       source,
-      machineMode: options.machineMode ?? "account",
-      machineId: accountMachineId(cred.apiKey),
     },
   };
 }
 
-/** ① 网关：自动发现 + 可选 Key / 管理密码。 */
-function gatewayMethod({ options, lang, fetchImpl }) {
-  return {
-    type: "api",
-    label: t(lang, "loginGateway"),
-    placeholder: DEFAULT_GATEWAY_URL,
-    prompts: [
-      {
-        type: "text",
-        key: "url",
-        message: t(lang, "promptGatewayUrl"),
-        placeholder: DEFAULT_GATEWAY_URL,
-        validate: (value) => (isValidUrl(String(value ?? "").trim())
-          ? undefined
-          : "请输入 http:// 或 https:// 开头的地址（例如 http://127.0.0.1:10087）"),
-      },
-      { type: "password", key: "key", message: t(lang, "promptGatewayKey") },
-      { type: "password", key: "admin", message: t(lang, "promptGatewayAdmin") },
-    ],
-    async authorize(inputs = {}) {
-      if (options.debug) console.error("[magpie-deepaicode] gateway inputs:", JSON.stringify(inputs));
-      const url = trimSlash(inputs.url || options.gatewayUrl || DEFAULT_GATEWAY_URL);
-      if (!isValidUrl(url)) return { type: "failed", error: t(lang, "errGatewayDown", { url }) };
-
-      const rawKey = String(inputs.key ?? inputs.gatewayKey ?? "").trim() || String(options.gatewayKey ?? "").trim();
-      const keylessInput = /^(loopback|none|无|无密钥)$/i.test(rawKey);
-      const key = keylessInput ? "" : rawKey;
-      const admin = String(inputs.admin ?? "").trim() || String(options.gatewayAdmin ?? "").trim();
-      const effectiveKey = key || LOOPBACK_KEY;
-
-      try {
-        await getHealth(url, { fetchImpl });
-      } catch (err) {
-        return { type: "failed", error: t(lang, "errGatewayDown", { url }) };
-      }
-
-      try {
-        await getModels(url, { key: effectiveKey, fetchImpl });
-      } catch (err) {
-        if (err instanceof HttpError && err.status === 401) {
-          return { type: "failed", error: t(lang, "errGatewayUnauthorized") };
-        }
-        if (err instanceof HttpError && err.status === 503) {
-          return { type: "failed", error: t(lang, "errGatewaySetupRequired", { url }) };
-        }
-        return { type: "failed", error: String(err?.message ?? err) };
-      }
-
-      let health = null;
-      try {
-        health = await getHealth(url, { fetchImpl });
-      } catch {
-        // 已经验过 /v1/models，这里失败不影响登录
-      }
-
-      return {
-        type: "success",
-        key: effectiveKey,
-        accountId: accountIdFor({ mode: "gateway", url, key: effectiveKey }),
-        metadata: {
-          mode: "gateway",
-          url,
-          admin,
-          keyless: !key,
-          discovered: health
-            ? { accounts: health.accounts ?? null, ready: health.ready ?? null, models: health.models ?? null }
-            : null,
-        },
-      };
-    },
-  };
-}
-
-/** ② 桌面端凭据（留空自动读取；也可以直接粘贴 Key）。 */
+/** ① 桌面端凭据（留空自动读取；也可以直接粘贴 Key）。 */
 function desktopMethod({ options, lang, fetchImpl }) {
   return {
     type: "api",
@@ -162,7 +81,7 @@ function desktopMethod({ options, lang, fetchImpl }) {
       { type: "password", key: "key", message: t(lang, "promptDesktopKey"), placeholder: "auto" },
     ],
     async authorize(inputs = {}) {
-      if (options.debug) console.error("[magpie-deepaicode] desktop inputs:", JSON.stringify(inputs));
+      if (options.debug) console.error(`[magpie-deepaicode] desktop ${inputShape(inputs)}`);
 
       let cred = null;
       const rawTyped = pickKey(inputs);
@@ -191,7 +110,6 @@ function desktopMethod({ options, lang, fetchImpl }) {
 
       const verified = await verifyDirectKey(options.baseOrigin || DEFAULT_BASE_ORIGIN, {
         key: cred.apiKey,
-        machineMode: options.machineMode,
         fetchImpl,
         lang,
       });
@@ -200,14 +118,13 @@ function desktopMethod({ options, lang, fetchImpl }) {
       return directSuccess({
         cred,
         source: cred.path ? "desktop" : "manual",
-        options,
-        accountId: accountIdFor({ mode: "direct", key: cred.apiKey }),
+        accountId: accountIdFor({ key: cred.apiKey }),
       });
     },
   };
 }
 
-/** ③ 粘贴 Key（显式提问，保证一定能拿到值）。 */
+/** ② 粘贴 Key（显式提问，保证一定能拿到值）。 */
 function pasteMethod({ options, lang, fetchImpl }) {
   return {
     type: "api",
@@ -218,13 +135,12 @@ function pasteMethod({ options, lang, fetchImpl }) {
       { type: "text", key: "username", message: t(lang, "promptUsername") },
     ],
     async authorize(inputs = {}) {
-      if (options.debug) console.error("[magpie-deepaicode] paste inputs:", JSON.stringify(inputs));
+      if (options.debug) console.error(`[magpie-deepaicode] paste ${inputShape(inputs)}`);
       const key = pickKey(inputs);
       if (!key) return { type: "failed", error: t(lang, "errKeyMissing") };
 
       const verified = await verifyDirectKey(options.baseOrigin || DEFAULT_BASE_ORIGIN, {
         key,
-        machineMode: options.machineMode,
         fetchImpl,
         lang,
       });
@@ -233,8 +149,7 @@ function pasteMethod({ options, lang, fetchImpl }) {
       return directSuccess({
         cred: { apiKey: key, username: String(inputs.username ?? "").trim(), isPro: false },
         source: "manual",
-        options,
-        accountId: accountIdFor({ mode: "direct", key }),
+        accountId: accountIdFor({ key }),
       });
     },
   };
@@ -316,7 +231,7 @@ export function startCallbackServer({ timeoutMs = CALLBACK_TIMEOUT_MS, signal, l
   });
 }
 
-/** ④ 浏览器 + localhost 回调（复刻桌面端 desktop_auth；失败降级为粘贴 code）。 */
+/** ③ 浏览器 + localhost 回调（复刻桌面端 desktop_auth；失败降级为粘贴 code）。 */
 function browserMethod({ options, lang, fetchImpl }) {
   const origin = trimSlash(options.baseOrigin || DEFAULT_BASE_ORIGIN);
   const finish = async (code) => {
@@ -325,8 +240,7 @@ function browserMethod({ options, lang, fetchImpl }) {
       return directSuccess({
         cred,
         source: "browser",
-        options,
-        accountId: accountIdFor({ mode: "direct", key: cred.apiKey }),
+        accountId: accountIdFor({ key: cred.apiKey }),
       });
     } catch (err) {
       return { type: "failed", error: `换取 API Key 失败：${String(err?.message ?? err)}` };
@@ -377,20 +291,15 @@ function browserMethod({ options, lang, fetchImpl }) {
   };
 }
 
-/**
- * 登录方式：默认「浏览器（推荐）→ 桌面端凭据 → 粘贴 Key」。
- * 本机网关方式默认隐藏，选项 showGatewayLogin: true 才出现（排在最后）。
- */
+/** 登录方式：浏览器（推荐）→ 桌面端凭据 → 粘贴 Key。 */
 export function createMethods({ options = {}, deps = {} } = {}) {
   const lang = resolveLang(options);
   const fetchImpl = deps.fetchImpl ?? globalThis.fetch;
-  const methods = [
+  return [
     browserMethod({ options, lang, fetchImpl }),
     desktopMethod({ options, lang, fetchImpl }),
     pasteMethod({ options, lang, fetchImpl }),
   ];
-  if (options.showGatewayLogin) methods.push(gatewayMethod({ options, lang, fetchImpl }));
-  return methods;
 }
 
 export { pickKey };

@@ -56,11 +56,15 @@ test("chat.headers：只给本供应商加会话粘性", async () => {
 });
 
 test("resolveOptions：magpie options 与显式参数合并、类型收敛", () => {
-  const opts = resolveOptions({ magpie: { options: { mode: "DIRECT", gatewayUrl: " http://gw:1000 " } } }, { lang: "en" });
-  assert.equal(opts.mode, "direct");
-  assert.equal(opts.gatewayUrl, "http://gw:1000");
+  const opts = resolveOptions(
+    { magpie: { options: { laneVersion: " 3 ", baseOrigin: " https://api.deepai.org/ " } } },
+    { lang: "en" },
+  );
+  assert.equal(opts.laneVersion, "3");
+  assert.equal(opts.baseOrigin, "https://api.deepai.org/", "尾斜杠由 resolveAccountSettings 归一");
   assert.equal(opts.lang, "en");
-  assert.equal(opts.machineMode, "account");
-  assert.equal(resolveOptions({}, {}).mode, "direct");
-  assert.equal(resolveOptions({}, {}).showGatewayLogin, false);
+  const defaults = resolveOptions({}, {});
+  assert.equal(defaults.baseOrigin, "https://api.deepai.org");
+  assert.equal(defaults.laneVersion, "2");
+  assert.equal(defaults.debug, false);
 });

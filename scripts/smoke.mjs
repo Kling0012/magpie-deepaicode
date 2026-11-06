@@ -1,9 +1,10 @@
-// 钩子级联调：对着一台正在运行的网关（真网关或 mock）跑 models / usage / checkin / loader。
+// 钩子级联调：对上游 api.deepai.org 直连跑 models / usage / checkin / loader。
 //
-//   node scripts/smoke.mjs --url http://127.0.0.1:10099 [--key …] [--admin …]
+//   node scripts/smoke.mjs [--key …] [--secret-dir …]
 //
-// 与 magpie 无关：这里直接调用插件返回的钩子，验证"账号 → 钩子 → 网关"这条链路。
+// 与 magpie 无关：这里直接调用插件返回的钩子，验证"账号 → 钩子 → 上游"这条链路。
 
+import { findDesktopCredentials } from "../src/credentials.mjs";
 import { DeepAICodePlugin, resolveOptions } from "../index.mjs";
 
 const argv = process.argv.slice(2);
@@ -12,16 +13,23 @@ function arg(name, fallback) {
   return i >= 0 ? argv[i + 1] : fallback;
 }
 
-const url = arg("url", "http://127.0.0.1:10099");
-const key = arg("key", "loopback");
-const admin = arg("admin", "");
+let key = String(arg("key", "") ?? "").trim();
+if (!key) {
+  const found = findDesktopCredentials({ explicit: String(arg("secret-dir", "") ?? "").trim() });
+  if (!found.ok) {
+    console.error("没有 Key：用 --key 传入，或先在 DeepAI Code 桌面端登录一次。");
+    process.exitCode = 1;
+    process.exit(process.exitCode);
+  }
+  key = found.cred.apiKey;
+}
 
 const options = resolveOptions({}, { debug: false });
 const auth = {
   type: "api",
   key,
-  accountId: `gw:${url.replace(/^https?:\/\//, "")}:smoke`,
-  metadata: { mode: "gateway", url, admin, keyless: key === "loopback" },
+  accountId: "deepai:smoke",
+  metadata: { mode: "direct" },
 };
 
 const hooks = await DeepAICodePlugin({}, options);
@@ -45,7 +53,6 @@ console.log(`  ${JSON.stringify(checkin)}`);
 console.log("[loader]");
 const loader = await hooks.auth.loader(getAuth);
 console.log(`  baseURL: ${loader.baseURL}`);
-console.log(`  apiKey: ${loader.apiKey ? "(set)" : "(none)"}`);
 const res = await loader.fetch(`${loader.baseURL}/chat/completions`, {
   method: "POST",
   headers: { "content-type": "application/json" },

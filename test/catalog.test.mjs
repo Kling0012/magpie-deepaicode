@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 
 import {
   catalogFromDirect,
-  catalogFromGateway,
   createCatalogCache,
   fallbackModels,
   modelsFromCatalog,
@@ -23,21 +22,16 @@ const upstreamModel = {
   theosPerRequest: "0",
 };
 
-const gatewayModel = {
+const responsesModel = {
   id: "gpt-6-astra",
-  object: "model",
-  owned_by: "deepai",
-  deepai: {
-    name: "GPT-6 Astra",
-    reasoning: true,
-    input: ["text", "image"],
-    context_window: 1048576,
-    max_tokens: 131072,
-    premier: true,
-    free: false,
-    api: "openai-responses",
-    theos_per_request: "50",
-  },
+  name: "GPT-6 Astra",
+  reasoning: true,
+  input: ["text", "image"],
+  contextWindow: 1048576,
+  maxTokens: 131072,
+  premier: true,
+  theosPerRequest: "50",
+  api: "openai-responses",
 };
 
 test("normalizeRawModel：上游形态", () => {
@@ -49,8 +43,8 @@ test("normalizeRawModel：上游形态", () => {
   assert.deepEqual(m.input, ["text", "image"]);
 });
 
-test("normalizeRawModel：网关形态（deepai 元信息优先）", () => {
-  const m = normalizeRawModel(gatewayModel);
+test("normalizeRawModel：Responses 模型（api 字段）", () => {
+  const m = normalizeRawModel(responsesModel);
   assert.equal(m.name, "GPT-6 Astra");
   assert.equal(m.free, false);
   assert.equal(m.rate, 50);
@@ -91,19 +85,16 @@ test("magpie 模型：免费用 free 而不是 rate:0", () => {
 });
 
 test("Responses 模型带模型级 npm 覆盖", () => {
-  const m = toMagpieModel(normalizeRawModel(gatewayModel));
+  const m = toMagpieModel(normalizeRawModel(responsesModel));
   assert.equal(m.provider.npm, "@ai-sdk/openai");
 });
 
-test("目录解析：上游 /models 与网关 /v1/models", () => {
+test("目录解析：上游 /models", () => {
   const direct = catalogFromDirect({ models: [upstreamModel, upstreamModel], default: "glm-5.3-flash" });
   assert.equal(direct.length, 1, "重复 id 应去重");
 
-  const gateway = catalogFromGateway({ object: "list", data: [gatewayModel, upstreamModel] });
-  assert.equal(gateway.length, 2);
-
   assert.deepEqual(catalogFromDirect({}), []);
-  assert.deepEqual(catalogFromGateway(null), []);
+  assert.deepEqual(catalogFromDirect(null), []);
 });
 
 test("modelsFromCatalog：键为 id，并展开基础模型", () => {

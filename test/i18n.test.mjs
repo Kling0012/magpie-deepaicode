@@ -16,7 +16,7 @@ test("resolveLang：默认中文，en 开头切英文", () => {
 });
 
 test("t：变量替换与缺键回退", () => {
-  assert.equal(t("zh", "errGatewayDown", { url: "http://gw" }), "网关未响应（http://gw）。请先启动 DeepAICode2API，或在登录时改用“直连”。");
-  assert.equal(t("en", "usagePoolPlan", { ready: 3, total: 4 }), "Pool · 3/4 ready");
+  assert.equal(t("zh", "usageLeftDisplay", { balance: "200", granted: "200" }), "剩 200 / 200 theos");
+  assert.equal(t("en", "usageCredits", { n: 42 }), "42 credits");
   assert.equal(t("en", "missing-key"), "missing-key");
 });

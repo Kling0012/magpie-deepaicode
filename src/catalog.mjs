@@ -1,29 +1,15 @@
-// 模型目录：两套来源（网关 / 上游）归一化成同一份内部结构，再映射成 magpie 模型。
+// 模型目录：上游 /deepai_code/models 归一化成内部结构，再映射成 magpie 模型。
 //
 // 免费与倍率的判定依据（不自己发明）：
-//   - 上游/网关的 theosPerRequest == "0"  → 免费（magpie 的 free: true）
-//   - 其它 theosPerRequest 数值           → magpie 的 rate（一次请求消耗的点数倍率）
+//   - 上游的 theosPerRequest == "0"  → 免费（magpie 的 free: true）
+//   - 其它 theosPerRequest 数值      → magpie 的 rate（一次请求消耗的点数倍率）
 //   - magpie 里 rate: 0 表示“没有倍率”，不是免费，所以免费必须用 free: true 表达
 
 import { CATALOG_TTL_MS, FALLBACK_MODELS } from "./constants.mjs";
 import { formatNumber, isZeroCost, toNumber } from "./util.mjs";
 
-/** 读取对象里可能存在的两套命名（上游 camelCase / 网关 deepai snake_case）。 */
+/** 读取上游目录条目（camelCase）。 */
 function pickMeta(raw) {
-  const deepai = raw?.deepai && typeof raw.deepai === "object" ? raw.deepai : null;
-  if (deepai) {
-    return {
-      name: String(deepai.name ?? raw?.name ?? raw?.id ?? ""),
-      reasoning: Boolean(deepai.reasoning),
-      input: Array.isArray(deepai.input) ? deepai.input : ["text"],
-      contextWindow: toNumber(deepai.context_window, 0),
-      maxTokens: toNumber(deepai.max_tokens, 0),
-      premier: Boolean(deepai.premier),
-      theosPerRequest: String(deepai.theos_per_request ?? ""),
-      freeFlag: typeof deepai.free === "boolean" ? deepai.free : undefined,
-      api: String(deepai.api ?? ""),
-    };
-  }
   return {
     name: String(raw?.name ?? raw?.id ?? ""),
     reasoning: Boolean(raw?.reasoning),
@@ -73,12 +59,6 @@ export function normalizeRawModel(raw) {
 export function catalogFromDirect(payload) {
   const models = Array.isArray(payload?.models) ? payload.models : [];
   return dedupe(models.map(normalizeRawModel).filter(Boolean));
-}
-
-/** 网关 /v1/models 的响应（OpenAI list）→ 归一化列表。 */
-export function catalogFromGateway(payload) {
-  const data = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
-  return dedupe(data.map(normalizeRawModel).filter(Boolean));
 }
 
 function dedupe(models) {

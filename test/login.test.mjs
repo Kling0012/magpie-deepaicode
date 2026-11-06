@@ -15,59 +15,13 @@ function json(body, status = 200) {
   });
 }
 
-test("createMethods：默认三路（浏览器推荐在前），网关隐藏", () => {
+test("createMethods：三路（浏览器推荐在前）", () => {
   const methods = createMethods({ options: { lang: "zh" }, deps: { fetchImpl: async () => json({}) } });
   assert.equal(methods.length, 3);
   assert.deepEqual(methods.map((m) => m.type), ["oauth", "api", "api"]);
   assert.match(methods[0].label, /推荐/);
   assert.match(methods[1].label, /凭据/);
   assert.match(methods[2].label, /Key/);
-});
-
-test("createMethods：showGatewayLogin 才出现网关方式（排最后）", () => {
-  const methods = createMethods({ options: { lang: "zh", showGatewayLogin: true }, deps: { fetchImpl: async () => json({}) } });
-  assert.equal(methods.length, 4);
-  assert.match(methods.at(-1).label, /网关/);
-  assert.equal(methods.at(-1).prompts.length, 3);
-});
-
-test("网关登录：成功且 keyless（未签发密钥的网关）", async () => {
-  const fetchImpl = async (url) => {
-    if (url.endsWith("/health")) return json({ accounts: 2, ready: 1, models: 14 });
-    if (url.endsWith("/v1/models")) return json({ object: "list", data: [] });
-    throw new Error(`unexpected ${url}`);
-  };
-  const methods = createMethods({ options: { lang: "zh", showGatewayLogin: true }, deps: { fetchImpl } });
-  const out = await methods.at(-1).authorize({ url: "http://127.0.0.1:10087", key: "", admin: "pw", dir: "", username: "" });
-  assert.equal(out.type, "success");
-  assert.equal(out.key, "loopback");
-  assert.equal(out.metadata.mode, "gateway");
-  assert.equal(out.metadata.keyless, true);
-  assert.equal(out.metadata.admin, "pw");
-  assert.equal(out.metadata.discovered.models, 14);
-  assert.match(out.accountId, /^gw:127\.0\.0\.1:10087:/);
-});
-
-test("网关登录：401 给出密钥提示", async () => {
-  const fetchImpl = async (url) => {
-    if (url.endsWith("/health")) return json({ accounts: 1 });
-    if (url.endsWith("/v1/models")) return json({ error: { message: "API 密钥无效或已停用", code: 401 } }, 401);
-    throw new Error("unexpected");
-  };
-  const methods = createMethods({ options: { lang: "zh", showGatewayLogin: true }, deps: { fetchImpl } });
-  const out = await methods.at(-1).authorize({ url: "http://127.0.0.1:10087", key: "bad" });
-  assert.equal(out.type, "failed");
-  assert.match(out.error, /网关拒绝了请求/);
-});
-
-test("网关登录：网关没起来给出地址提示", async () => {
-  const fetchImpl = async () => {
-    throw new Error("Failed to connect to 127.0.0.1:10087");
-  };
-  const methods = createMethods({ options: { lang: "zh", showGatewayLogin: true }, deps: { fetchImpl } });
-  const out = await methods.at(-1).authorize({ url: "http://127.0.0.1:10087" });
-  assert.equal(out.type, "failed");
-  assert.match(out.error, /127\.0\.0\.1:10087/);
 });
 
 test("桌面端登录：读文件 + /theos 验活", async () => {
@@ -86,13 +40,14 @@ test("桌面端登录：读文件 + /theos 验活", async () => {
       if (url.endsWith("/theos")) return json({ enabled: true, balance: "200.00000", granted: "200.00000" });
       throw new Error(`unexpected ${url}`);
     };
-    const methods = createMethods({ options: { lang: "zh", showGatewayLogin: true }, deps: { fetchImpl } });
+    const methods = createMethods({ options: { lang: "zh" }, deps: { fetchImpl } });
     const out = await methods[1].authorize({ dir: "", key: "", keyInputs: "" });
     assert.equal(out.type, "success");
     assert.equal(out.key, KEY);
     assert.equal(out.metadata.mode, "direct");
     assert.equal(out.metadata.source, "desktop");
     assert.equal(out.metadata.username, "ada");
+    assert.equal(out.metadata.machineId, undefined, "不应保存每账号派生的机器标识");
     assert.match(out.accountId, /^deepai:/);
   } finally {
     if (old === undefined) delete process.env.T3CODE_HOME;
@@ -116,7 +71,7 @@ test("粘贴登录：缺 Key 失败；有 Key 成功", async () => {
     if (url.endsWith("/theos")) return json({ enabled: true, balance: "200", granted: "200" });
     throw new Error(`unexpected ${url}`);
   };
-  const methods = createMethods({ options: { lang: "zh", showGatewayLogin: true }, deps: { fetchImpl } });
+  const methods = createMethods({ options: { lang: "zh" }, deps: { fetchImpl } });
 
   const missing = await methods[2].authorize({});
   assert.equal(missing.type, "failed");
@@ -128,6 +83,29 @@ test("粘贴登录：缺 Key 失败；有 Key 成功", async () => {
   assert.equal(ok.metadata.username, "ada");
 });
 
+test("debug 日志只记字段名，绝不记录 Key 值", async () => {
+  const lines = [];
+  const original = console.error;
+  console.error = (...args) => lines.push(args.map(String).join(" "));
+  try {
+    const fetchImpl = async (url) => {
+      if (url.endsWith("/theos")) return json({ enabled: true, balance: "200", granted: "200" });
+      throw new Error(`unexpected ${url}`);
+    };
+    const methods = createMethods({
+      options: { lang: "zh", debug: true },
+      deps: { fetchImpl },
+    });
+    await methods[2].authorize({ key: KEY, username: "ada" });
+  } finally {
+    console.error = original;
+  }
+
+  const all = lines.join("\n");
+  assert.match(all, /fields present: .*key/);
+  assert.ok(!all.includes(KEY), "日志不得包含 Key 明文");
+});
+
 test("浏览器登录：本地回调收到 code 后换 Key", async () => {
   const fetchImpl = async (url, init) => {
     if (url.includes("/desktop_auth/exchange/")) {
@@ -136,7 +114,7 @@ test("浏览器登录：本地回调收到 code 后换 Key", async () => {
     }
     throw new Error(`unexpected ${url}`);
   };
-  const methods = createMethods({ options: { lang: "zh", showGatewayLogin: true }, deps: { fetchImpl } });
+  const methods = createMethods({ options: { lang: "zh" }, deps: { fetchImpl } });
   const method = methods[0];
 
   const authz = await method.authorize({}, {});

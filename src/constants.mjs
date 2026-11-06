@@ -1,13 +1,11 @@
 // 常量与兜底数据。
 //
-// 上游事实来源：DeepAICode2API（MIT）的 internal/deepai/*、internal/server/*，
+// 上游事实来源：DeepAI Code 桌面端 / api.deepai.org 的实际行为，
 // 网络实测见 PROTOCOL.md。这里只放“实现要照抄”的常量，不放逻辑。
 
 export const PROVIDER = "deepaicode";
-export const VERSION = "0.1.1";
+export const VERSION = "0.2.0";
 
-/** 本机网关默认地址（DeepAICode2API 的默认监听）。 */
-export const DEFAULT_GATEWAY_URL = "http://127.0.0.1:10087";
 /** 直连上游默认地址。 */
 export const DEFAULT_BASE_ORIGIN = "https://api.deepai.org";
 /** 直连模式在 origin 下的路径前缀。 */
@@ -27,16 +25,14 @@ export const CREDENTIAL_FILES = ["deepai-account.bin", "deepai-account-user-mana
 export const SECRET_SUBDIRS = [["userdata", "secrets"], ["secrets"], ["dev", "secrets"]];
 
 export const CATALOG_TTL_MS = 60_000;
-/** Retry-After 的夹取上限（秒），与参考实现一致。 */
+/** Retry-After 的夹取上限（秒），与上游行为对齐。 */
 export const RETRY_AFTER_CAP_S = 30;
 /** 非流式 JSON 响应体的读取上限。 */
 export const MAX_JSON_BYTES = 1 << 20;
-/** 登录时探测网关 /health 的超时。 */
-export const HEALTH_TIMEOUT_MS = 5_000;
 
 /**
  * 上游模型目录不可用时的兜底快照（2026-11-06 实测，14 个）。
- * 只用于“没登录 / 网关没起来”时仍然有模型可选；正常路径永远以动态目录为准。
+ * 只用于“没登录 / 目录请求失败”时仍然有模型可选；正常路径永远以动态目录为准。
  */
 export const FALLBACK_MODELS = [
   { id: "glm-5.3-flash", name: "GLM 5.3 Flash", reasoning: true, input: ["text", "image"], contextWindow: 1048576, maxTokens: 131072, premier: false, theosPerRequest: "0" },
@@ -59,21 +55,12 @@ export const FALLBACK_MODELS = [
 export const FALLBACK_SNAPSHOT_DATE = "2026-11-06";
 
 export const DEFAULT_OPTIONS = {
-  /** 新账号默认模式：gateway | direct（默认直连，网关登录方式默认隐藏） */
-  mode: "direct",
-  gatewayUrl: DEFAULT_GATEWAY_URL,
-  gatewayKey: "",
-  gatewayAdmin: "",
   baseOrigin: DEFAULT_BASE_ORIGIN,
   laneVersion: DEFAULT_LANE_VERSION,
-  /** account：每个 Key 派生独立指纹；device：用真实设备指纹 */
-  machineMode: "account",
   /** 界面语言：zh | en */
   lang: "zh",
   /** 桌面端凭据目录（留空自动探测） */
   secretDir: "",
-  /** 是否显示“本机 DeepAICode2API”登录方式（默认隐藏，面向自建网关的用户） */
-  showGatewayLogin: false,
-  /** 调试日志 */
+  /** 调试日志（只记录字段名，不记录值） */
   debug: false,
 };

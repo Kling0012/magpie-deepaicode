@@ -7,7 +7,7 @@ export function trimSlash(value) {
   return String(value ?? "").trim().replace(/\/+$/, "");
 }
 
-/** 上游/网关的数值常是字符串（"200.00000"），统一转数字；不认识返回 fallback。 */
+/** 上游的数值常是字符串（"200.00000"），统一转数字；不认识返回 fallback。 */
 export function toNumber(value, fallback = 0) {
   if (typeof value === "number") return Number.isFinite(value) ? value : fallback;
   if (typeof value !== "string") return fallback;
@@ -54,20 +54,13 @@ export function parseResetTime(value) {
 }
 
 /** 把错误变成用户能看懂的一句话（不泄露 Key）。 */
-export function describeError(err, { lang = "zh", mode = "gateway", url = "" } = {}) {
+export function describeError(err, { lang = "zh" } = {}) {
   const status = Number(err?.status ?? 0);
   const raw = String(err?.message ?? err ?? "");
 
-  if (status === 401) return t(lang, "errGatewayUnauthorized");
-  if (status === 503 && /setup_required|尚未签发/.test(raw)) {
-    return t(lang, "errGatewaySetupRequired", { url });
-  }
+  if (status === 401) return t(lang, "errSignInExpired");
   if (status === 426) return t(lang, "errLane");
-  if (status === 429) return mode === "gateway" ? t(lang, "errPoolEmpty") : t(lang, "errLane");
   if (/redirect/i.test(raw)) return t(lang, "errRedirect");
-  if (/ECONNREFUSED|Failed to connect|connection refused|could not connect|fetch failed/i.test(raw)) {
-    return mode === "gateway" ? t(lang, "errGatewayDown", { url }) : raw;
-  }
   if (/timeout|timed out|AbortError/i.test(raw)) return t(lang, "errTimeout");
   return raw || t(lang, "errSignInExpired");
 }

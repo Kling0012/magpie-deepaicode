@@ -8,77 +8,6 @@
 import { t } from "./i18n.mjs";
 import { formatNumber, toNumber } from "./util.mjs";
 
-/** 网关模式：池级额度窗口。 */
-export function buildGatewayUsage({ pool, lang = "zh" }) {
-  const total = toNumber(pool?.total, 0);
-  const withQuota = toNumber(pool?.withQuota, 0);
-  const balance = toNumber(pool?.sumBalance, 0);
-  const granted = toNumber(pool?.sumGranted, 0);
-
-  const usage = {
-    plan: t(lang, "usagePoolPlan", { ready: toNumber(pool?.enabled, 0), total }),
-    windows: [],
-  };
-
-  if (total === 0) {
-    usage.error = t(lang, "usageNoAccount");
-    return usage;
-  }
-
-  const window = {
-    name: t(lang, "usagePoolName"),
-    unit: "theos",
-    aside: false,
-    display: t(lang, "usagePoolDisplay", {
-      withQuota,
-      total,
-      balance: formatNumber(balance),
-      granted: formatNumber(granted),
-    }),
-  };
-  if (granted > 0) {
-    // magpie 的 amount 是“窗口内的已用量”，不是剩余量：已用 = 总额度 - 余额。
-    window.amount = Math.max(0, granted - balance);
-    window.limit = granted;
-  }
-  if (pool?.earliestResetAt) window.resetsAt = pool.earliestResetAt;
-
-  usage.windows.push(window);
-  if (toNumber(pool?.errored, 0) > 0) {
-    usage.error = t(lang, "checkinPoolFailed", { n: toNumber(pool?.errored, 0) });
-  }
-  return usage;
-}
-
-/** 网关模式：没有管理密码时，用 /v1/deepai/theos 的单号视角兜底。 */
-export function buildGatewaySingleUsage({ allowance, lang = "zh", note = "" }) {
-  const usage = { plan: "", windows: [] };
-  if (!allowance) {
-    usage.error = t(lang, "usageNoAccount");
-    return usage;
-  }
-  const balance = toNumber(allowance.balance, 0);
-  const granted = toNumber(allowance.granted, 0);
-
-  const window = {
-    name: t(lang, "usageTodayName"),
-    unit: "theos",
-    aside: false,
-    display: granted > 0
-      ? t(lang, "usageLeftDisplay", { balance: formatNumber(balance), granted: formatNumber(granted) })
-      : t(lang, "usagePending"),
-  };
-  if (granted > 0) {
-    window.amount = Math.max(0, granted - balance);
-    window.limit = granted;
-  }
-  if (allowance.refreshAt) window.resetsAt = allowance.refreshAt;
-  if (note) window.display = `${window.display} · ${note}`;
-
-  usage.windows.push(window);
-  return usage;
-}
-
 /** 直连模式：/theos + /get_usage_summary。 */
 export function buildDirectUsage({ allowance, summary, username = "", lang = "zh" }) {
   const usage = { windows: [] };
@@ -109,6 +38,7 @@ export function buildDirectUsage({ allowance, summary, username = "", lang = "zh
       : t(lang, "usagePending"),
   };
   if (granted > 0) {
+    // magpie 的 amount 是“窗口内的已用量”，不是剩余量：已用 = 总额度 - 余额。
     window.amount = Math.max(0, granted - balance);
     window.limit = granted;
   }
@@ -137,27 +67,4 @@ export function buildDirectCheckin({ allowance, prevRefreshAt = "", lang = "zh" 
     return { outcome: "done", message: t(lang, "checkinAlready") };
   }
   return { outcome: "claimed", message: t(lang, "checkinGranted") };
-}
-
-/**
- * 网关模式签到结果汇总。
- * prevWithQuota 为上一次观察到的“有额度账号数”，用来判断本次是否真的新领到。
- */
-export function buildGatewayCheckin({ results = [], prevWithQuota = null, lang = "zh" }) {
-  const total = results.length;
-  if (total === 0) return { outcome: "ineligible", message: t(lang, "usageNoAccount") };
-
-  const okCount = results.filter((r) => r?.ok).length;
-  const failed = total - okCount;
-  if (okCount === 0) return { outcome: "failed", message: t(lang, "checkinPoolFailed", { n: failed }) };
-
-  const withQuota = results.filter((r) => toNumber(r?.theos?.balance, 0) > 0).length;
-  if (typeof prevWithQuota === "number" && withQuota > prevWithQuota) {
-    return {
-      outcome: "claimed",
-      credit: withQuota - prevWithQuota,
-      message: t(lang, "checkinPoolClaimed", { n: withQuota - prevWithQuota }),
-    };
-  }
-  return { outcome: "done", message: t(lang, "checkinPoolDone", { n: okCount, withQuota }) };
 }
