@@ -26,6 +26,9 @@
     "type": "git",
     "url": "https://github.com/aqiu817/magpie-deepaicode"
   },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/"
+  },
   "scripts": {
     "test": "node --test",
     "probe": "node scripts/probe.mjs",
