@@ -1,0 +1,396 @@
+// 登录：四种方式（网关 / 桌面端凭据 / 粘贴 Key / 浏览器 + localhost 回调）。
+//
+// 关于 authorize(inputs)：inputs 里既可能有 prompts 的回答，也可能有 magpie
+// 自己的 key 输入框内容。这里用 pickKey 兜住几种可能的字段名，取不到就按
+// “没有输入 key”处理（桌面端凭据 / 浏览器登录本来就不需要用户填 key）。
+
+import { createServer } from "node:http";
+import { randomBytes } from "node:crypto";
+
+import {
+  DEFAULT_BASE_ORIGIN,
+  DEFAULT_GATEWAY_URL,
+} from "./constants.mjs";
+import { findDesktopCredentials } from "./credentials.mjs";
+import { getTheos, exchangeCode, normalizeAllowance } from "./direct.mjs";
+import { getHealth, getModels } from "./gateway.mjs";
+import { HttpError } from "./http.mjs";
+import { resolveLang, t } from "./i18n.mjs";
+import { accountMachineId, resolveMachineFingerprint, sha256Hex } from "./machine.mjs";
+import { accountIdFor, LOOPBACK_KEY } from "./modes.mjs";
+import { trimSlash } from "./util.mjs";
+
+const VERIFY_TIMEOUT_MS = 15_000;
+/** 浏览器登录等待回调的上限。 */
+const CALLBACK_TIMEOUT_MS = 180_000;
+
+function pickKey(inputs) {
+  for (const name of ["key", "apiKey", "gatewayKey", "token", "secret", "api_key"]) {
+    const value = inputs?.[name];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+function isValidUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/** 直连模式的验活：/theos。只有鉴权类错误才判登录失败，网络抖动放行。 */
+async function verifyDirectKey(origin, { key, machineMode, fetchImpl, lang }) {
+  const machineFp = resolveMachineFingerprint({ apiKey: key, machineMode });
+  try {
+    const payload = await getTheos(origin, { key, machineFp, fetchImpl, timeoutMs: VERIFY_TIMEOUT_MS });
+    return { ok: true, allowance: normalizeAllowance(payload) };
+  } catch (err) {
+    if (err instanceof HttpError && [401, 403].includes(err.status)) {
+      const message = err.status === 401
+        ? t(lang, "errSignInExpired")
+        : t(lang, "errKeyMissing");
+      return { ok: false, error: message, status: err.status };
+    }
+    // 426（车道版本）是插件选项问题，值得直接告诉用户
+    if (err instanceof HttpError && err.status === 426) {
+      return { ok: false, error: t(lang, "errLane"), status: 426 };
+    }
+    // 其它（超时 / 5xx / 网络）不拦登录：凭据留着，让请求阶段再暴露
+    return { ok: true, transientError: String(err?.message ?? err) };
+  }
+}
+
+function directSuccess({ cred, source, options, accountId }) {
+  return {
+    type: "success",
+    key: cred.apiKey,
+    accountId,
+    metadata: {
+      mode: "direct",
+      username: cred.username || "",
+      source,
+      machineMode: options.machineMode ?? "account",
+      machineId: accountMachineId(cred.apiKey),
+    },
+  };
+}
+
+/** ① 网关：自动发现 + 可选 Key / 管理密码。 */
+function gatewayMethod({ options, lang, fetchImpl }) {
+  return {
+    type: "api",
+    label: t(lang, "loginGateway"),
+    placeholder: DEFAULT_GATEWAY_URL,
+    prompts: [
+      {
+        type: "text",
+        key: "url",
+        message: t(lang, "promptGatewayUrl"),
+        placeholder: DEFAULT_GATEWAY_URL,
+        validate: (value) => (isValidUrl(String(value ?? "").trim())
+          ? undefined
+          : "请输入 http:// 或 https:// 开头的地址（例如 http://127.0.0.1:10087）"),
+      },
+      { type: "password", key: "key", message: t(lang, "promptGatewayKey") },
+      { type: "password", key: "admin", message: t(lang, "promptGatewayAdmin") },
+    ],
+    async authorize(inputs = {}) {
+      if (options.debug) console.error("[magpie-deepaicode] gateway inputs:", JSON.stringify(inputs));
+      const url = trimSlash(inputs.url || options.gatewayUrl || DEFAULT_GATEWAY_URL);
+      if (!isValidUrl(url)) return { type: "failed", error: t(lang, "errGatewayDown", { url }) };
+
+      const rawKey = String(inputs.key ?? inputs.gatewayKey ?? "").trim() || String(options.gatewayKey ?? "").trim();
+      const keylessInput = /^(loopback|none|无|无密钥)$/i.test(rawKey);
+      const key = keylessInput ? "" : rawKey;
+      const admin = String(inputs.admin ?? "").trim() || String(options.gatewayAdmin ?? "").trim();
+      const effectiveKey = key || LOOPBACK_KEY;
+
+      try {
+        await getHealth(url, { fetchImpl });
+      } catch (err) {
+        return { type: "failed", error: t(lang, "errGatewayDown", { url }) };
+      }
+
+      try {
+        await getModels(url, { key: effectiveKey, fetchImpl });
+      } catch (err) {
+        if (err instanceof HttpError && err.status === 401) {
+          return { type: "failed", error: t(lang, "errGatewayUnauthorized") };
+        }
+        if (err instanceof HttpError && err.status === 503) {
+          return { type: "failed", error: t(lang, "errGatewaySetupRequired", { url }) };
+        }
+        return { type: "failed", error: String(err?.message ?? err) };
+      }
+
+      let health = null;
+      try {
+        health = await getHealth(url, { fetchImpl });
+      } catch {
+        // 已经验过 /v1/models，这里失败不影响登录
+      }
+
+      return {
+        type: "success",
+        key: effectiveKey,
+        accountId: accountIdFor({ mode: "gateway", url, key: effectiveKey }),
+        metadata: {
+          mode: "gateway",
+          url,
+          admin,
+          keyless: !key,
+          discovered: health
+            ? { accounts: health.accounts ?? null, ready: health.ready ?? null, models: health.models ?? null }
+            : null,
+        },
+      };
+    },
+  };
+}
+
+/** ② 桌面端凭据（留空自动读取；也可以直接粘贴 Key）。 */
+function desktopMethod({ options, lang, fetchImpl }) {
+  return {
+    type: "api",
+    label: t(lang, "loginDesktop"),
+    placeholder: "留空：自动读取 ~/.deepai-code/userdata/secrets/deepai-account.bin",
+    prompts: [
+      { type: "text", key: "dir", message: t(lang, "promptSecretDir"), placeholder: "~/.deepai-code" },
+      { type: "password", key: "key", message: t(lang, "promptDesktopKey"), placeholder: "auto" },
+    ],
+    async authorize(inputs = {}) {
+      if (options.debug) console.error("[magpie-deepaicode] desktop inputs:", JSON.stringify(inputs));
+
+      let cred = null;
+      const rawTyped = pickKey(inputs);
+      const typedKey = /^(auto|read|读取)$/i.test(rawTyped) ? "" : rawTyped;
+
+      if (typedKey) {
+        cred = { apiKey: typedKey, username: "", isPro: false, path: "" };
+      } else {
+        const found = findDesktopCredentials({
+          explicit: String(inputs.dir ?? "").trim() || String(options.secretDir ?? "").trim(),
+        });
+        if (!found.ok) {
+          if (found.path) {
+            return {
+              type: "failed",
+              error: t(lang, "errBadCredentials", { path: found.path, reason: found.reason }),
+            };
+          }
+          return {
+            type: "failed",
+            error: t(lang, "errNoCredentials", { tried: found.tried.join(", ") }),
+          };
+        }
+        cred = found.cred;
+      }
+
+      const verified = await verifyDirectKey(options.baseOrigin || DEFAULT_BASE_ORIGIN, {
+        key: cred.apiKey,
+        machineMode: options.machineMode,
+        fetchImpl,
+        lang,
+      });
+      if (!verified.ok) return { type: "failed", error: verified.error };
+
+      return directSuccess({
+        cred,
+        source: cred.path ? "desktop" : "manual",
+        options,
+        accountId: accountIdFor({ mode: "direct", key: cred.apiKey }),
+      });
+    },
+  };
+}
+
+/** ③ 粘贴 Key（显式提问，保证一定能拿到值）。 */
+function pasteMethod({ options, lang, fetchImpl }) {
+  return {
+    type: "api",
+    label: t(lang, "loginPaste"),
+    placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+    prompts: [
+      { type: "password", key: "key", message: t(lang, "promptApiKey") },
+      { type: "text", key: "username", message: t(lang, "promptUsername") },
+    ],
+    async authorize(inputs = {}) {
+      if (options.debug) console.error("[magpie-deepaicode] paste inputs:", JSON.stringify(inputs));
+      const key = pickKey(inputs);
+      if (!key) return { type: "failed", error: t(lang, "errKeyMissing") };
+
+      const verified = await verifyDirectKey(options.baseOrigin || DEFAULT_BASE_ORIGIN, {
+        key,
+        machineMode: options.machineMode,
+        fetchImpl,
+        lang,
+      });
+      if (!verified.ok) return { type: "failed", error: verified.error };
+
+      return directSuccess({
+        cred: { apiKey: key, username: String(inputs.username ?? "").trim(), isPro: false },
+        source: "manual",
+        options,
+        accountId: accountIdFor({ mode: "direct", key }),
+      });
+    },
+  };
+}
+
+function htmlPage(title, body) {
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>
+<style>body{font:16px/1.6 system-ui,sans-serif;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center;background:#0f1115;color:#e8ecf4}
+main{max-width:28rem;padding:2.5rem;border-radius:1rem;background:#171a21;box-shadow:0 10px 40px #0006}
+h1{font-size:1.25rem;margin:0 0 .75rem}
+p{opacity:.8;margin:0}</style></head>
+<body><main><h1>${title}</h1><p>${body}</p></main></body></html>`;
+}
+
+/**
+ * 启动 localhost 回调服务（只监听 127.0.0.1，随机端口，一次性）。
+ *
+ * 注意：上游回调可能只带 code 不带 state，所以“有 state 就校验、没有就只认路径与端口”。
+ */
+export function startCallbackServer({ timeoutMs = CALLBACK_TIMEOUT_MS, signal, lang = "zh" } = {}) {
+  return new Promise((resolve, reject) => {
+    const state = randomBytes(16).toString("hex");
+    const doneHtml = htmlPage(t(lang, "browserDoneTitle"), t(lang, "browserDoneBody"));
+    const failHtml = htmlPage(t(lang, "browserFailedTitle"), "state mismatch");
+
+    let settle = null;
+    const codePromise = new Promise((res, rej) => {
+      settle = { res, rej };
+    });
+
+    const server = createServer((req, res) => {
+      let url;
+      try {
+        url = new URL(req.url ?? "/", `http://127.0.0.1:${server.address()?.port ?? 0}`);
+      } catch {
+        res.writeHead(400).end("bad request");
+        return;
+      }
+      if (url.pathname !== "/auth-callback") {
+        res.writeHead(404, { "content-type": "text/plain; charset=utf-8" }).end("not found");
+        return;
+      }
+      const gotState = url.searchParams.get("state") ?? "";
+      if (gotState && gotState !== state) {
+        res.writeHead(400, { "content-type": "text/html; charset=utf-8" }).end(failHtml);
+        return;
+      }
+      const code = String(url.searchParams.get("code") ?? "").trim();
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(doneHtml);
+      if (code) settle.res(code);
+      else settle.rej(new Error("missing-code"));
+    });
+
+    const timer = setTimeout(() => settle.rej(new Error("timeout")), timeoutMs);
+    timer.unref?.();
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      try {
+        server.close();
+      } catch {
+        // 已关闭
+      }
+    };
+
+    signal?.addEventListener?.("abort", () => settle.rej(new Error("cancelled")));
+    server.on("error", (err) => {
+      cleanup();
+      reject(err);
+    });
+    server.listen(0, "127.0.0.1", () => {
+      resolve({
+        port: server.address().port,
+        state,
+        waitForCode: () => codePromise.finally(cleanup),
+        close: cleanup,
+      });
+    });
+  });
+}
+
+/** ④ 浏览器 + localhost 回调（复刻桌面端 desktop_auth；失败降级为粘贴 code）。 */
+function browserMethod({ options, lang, fetchImpl }) {
+  const origin = trimSlash(options.baseOrigin || DEFAULT_BASE_ORIGIN);
+  const finish = async (code) => {
+    try {
+      const cred = await exchangeCode(origin, code, { fetchImpl });
+      return directSuccess({
+        cred,
+        source: "browser",
+        options,
+        accountId: accountIdFor({ mode: "direct", key: cred.apiKey }),
+      });
+    } catch (err) {
+      return { type: "failed", error: `换取 API Key 失败：${String(err?.message ?? err)}` };
+    }
+  };
+
+  return {
+    type: "oauth",
+    label: t(lang, "loginBrowser"),
+    async authorize(_inputs, { signal } = {}) {
+      let server = null;
+      try {
+        server = await startCallbackServer({ signal, lang });
+      } catch {
+        server = null;
+      }
+
+      if (!server) {
+        // 监听失败：退化成“粘贴回调里的 code”
+        const state = randomBytes(8).toString("hex");
+        return {
+          url: `${origin}/deepai_code/desktop_auth/?state=${state}&port=0`,
+          instructions: t(lang, "browserInstructions"),
+          method: "code",
+          async callback(code) {
+            return finish(String(code ?? "").trim());
+          },
+        };
+      }
+
+      const loginUrl = `${origin}/deepai_code/desktop_auth/?state=${server.state}&port=${server.port}`;
+      return {
+        url: loginUrl,
+        instructions: t(lang, "browserInstructions"),
+        method: "auto",
+        async callback() {
+          try {
+            const code = await server.waitForCode();
+            return await finish(code);
+          } catch (err) {
+            return { type: "failed", error: `浏览器登录未完成：${String(err?.message ?? err)}` };
+          } finally {
+            server.close();
+          }
+        },
+      };
+    },
+  };
+}
+
+/**
+ * 登录方式：默认「浏览器（推荐）→ 桌面端凭据 → 粘贴 Key」。
+ * 本机网关方式默认隐藏，选项 showGatewayLogin: true 才出现（排在最后）。
+ */
+export function createMethods({ options = {}, deps = {} } = {}) {
+  const lang = resolveLang(options);
+  const fetchImpl = deps.fetchImpl ?? globalThis.fetch;
+  const methods = [
+    browserMethod({ options, lang, fetchImpl }),
+    desktopMethod({ options, lang, fetchImpl }),
+    pasteMethod({ options, lang, fetchImpl }),
+  ];
+  if (options.showGatewayLogin) methods.push(gatewayMethod({ options, lang, fetchImpl }));
+  return methods;
+}
+
+export { pickKey };

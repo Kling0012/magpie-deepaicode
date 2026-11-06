@@ -1,0 +1,8 @@
+node_modules/
+.research/
+*.log
+.env
+.env.*
+state*.json
+*.local.json
+.DS_Store

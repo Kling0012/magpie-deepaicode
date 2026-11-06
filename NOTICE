@@ -1,0 +1,23 @@
+magpie-deepaicode
+Copyright (c) 2026 aqiu817
+
+Protocol reference
+------------------
+This plugin's knowledge of the DeepAI Code upstream endpoints, headers, error
+semantics, credential location and machine-fingerprint rules was derived from
+DeepAICode2API (https://github.com/2951461586/DeepAICode2API), which is licensed
+under the MIT License. No source code from that project is copied into this
+repository; the facts were re-checked against the project's source and
+documentation and are recorded (with evidence levels) in PROTOCOL.md.
+
+magpie plugin specification
+---------------------------
+The plugin follows the magpie plugin documentation
+(https://usemagpie.ai/docs/zh/plugins). The plugin is an OpenCode v1 style
+provider plugin.
+
+Third-party names
+-----------------
+"DeepAI", "DeepAI Code" and model names are trademarks of their respective
+owners. This plugin is an unofficial integration and is not affiliated with or
+endorsed by DeepAI or by the authors of DeepAICode2API.

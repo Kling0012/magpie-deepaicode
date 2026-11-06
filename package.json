@@ -1,0 +1,43 @@
+{
+  "name": "magpie-deepaicode",
+  "version": "0.1.1",
+  "description": "OpenCode provider plugin: DeepAI Code models — local gateway or direct upstream",
+  "type": "module",
+  "main": "./index.mjs",
+  "files": [
+    "index.mjs",
+    "src",
+    "icon.svg",
+    "README.md",
+    "README.zh-CN.md",
+    "PROTOCOL.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "deepaicode",
+    "deepai",
+    "magpie"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aqiu817/magpie-deepaicode"
+  },
+  "scripts": {
+    "test": "node --test",
+    "probe": "node scripts/probe.mjs"
+  },
+  "magpie": {
+    "name": "DeepAI Code",
+    "summary": {
+      "en": "Use DeepAI Code models — through your local gateway or straight from the upstream.",
+      "zh": "使用 DeepAI Code 模型——走本机网关，或直连上游。"
+    },
+    "maxConcurrency": 4,
+    "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+CjxkZWZzPjxsaW5lYXJHcmFkaWVudCBpZD0iZyIgeDE9IjAiIHkxPSIwIiB4Mj0iMSIgeTI9IjEiPgo8c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiM1QjhERUYiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiMyQTVGQ0MiLz4KPC9saW5lYXJHcmFkaWVudD48L2RlZnM+CjxyZWN0IHg9IjIiIHk9IjIiIHdpZHRoPSI2MCIgaGVpZ2h0PSI2MCIgcng9IjE0IiBmaWxsPSJ1cmwoI2cpIi8+CjxwYXRoIGQ9Ik0xMiA0MGM2LTE4IDEyLTE4IDE4LThzMTIgMTAgMjItMTQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2ZmZmZmZiIgc3Ryb2tlLXdpZHRoPSI1IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KPGNpcmNsZSBjeD0iNDYiIGN5PSIyMCIgcj0iNCIgZmlsbD0iI2ZmZmZmZiIgb3BhY2l0eT0iMC45MiIvPgo8L3N2Zz4="
+  },
+  "homepage": "https://github.com/aqiu817/magpie-deepaicode#readme"
+}

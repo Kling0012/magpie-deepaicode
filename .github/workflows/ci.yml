@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: node ${{ matrix.node }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Test
+        run: node --test
+
+  bun:
+    name: bun smoke (plugin host runtime)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Import entry as Bun would
+        run: bun -e "import('./index.mjs').then(m => console.log(Object.keys(m)))"
+      - name: Load with magpie-like checks
+        run: |
+          bun -e "
+          import('./index.mjs').then(async (m) => {
+            const hooks = await m.DeepAICodePlugin({ magpie: { options: {} } }, {});
+            const keys = Object.keys(hooks);
+            console.log('hooks:', keys.join(', '));
+            if (!hooks.auth || hooks.auth.provider !== 'deepaicode') process.exit(1);
+            if (hooks.auth.methods.length !== 4) process.exit(1);
+          });
+          "
