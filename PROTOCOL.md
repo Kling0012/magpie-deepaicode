@@ -101,7 +101,7 @@ secrets : <base>/userdata/secrets → <base>/secrets → <base>/dev/secrets
 
 ### 1.7 已知坑
 
-1. 思维链在 `reasoning` 字段（参考实现会再补一份 `reasoning_content`）；插件是否需要在 SSE 里补写**待验证**（§4）。
+1. 思维链在 `reasoning` 字段（参考实现会再补一份 `reasoning_content`）；magpie 原生渲染该字段（§4 #8 已实测），**无需** SSE 补写。
 2. `models` 响应的默认模型字段名是 `default`（不是 `default_model`）。
 3. SSE 同一事件可能有多行 `data:`，按规范用 `\n` 拼接后再解析。
 4. 无效 Key 会 302 跳登录页——所有请求必须禁止跟随重定向。
@@ -196,14 +196,14 @@ magpie 的 `auth.usage` 约定：
 
 | # | 项目 | 状态 | 结论 |
 |---|---|---|---|
-| 1 | 上游 SSE 思维链字段 | ✅ 实测 | `delta` 里有 `reasoning` 与 `reasoning_details`，**没有** `reasoning_content`；magpie 是否把它透给 Agent 仍待观察（见下） |
+| 1 | 上游 SSE 思维链字段 | ✅ 实测 | `delta` 里有 `reasoning` 与 `reasoning_details`，**没有** `reasoning_content`；magpie 已确认原生透传渲染（见 #8） |
 | 2 | 工具调用 | ✅ 实测 | `tool_choice: "required"` + `max_tokens: 512` → `finish_reason: "tool_calls"`、`get_weather` 参数正确；`max_tokens: 64` 时会被思维链吃光，属正常现象 |
 | 3 | 图片输入 | ✅ 实测 | `image_url` + 1×1 PNG → 200，模型正确描述颜色 |
 | 4 | 模型级 npm 覆盖（`gpt-6-astra`） | ✅ 实测 | `magpie plugin --json` 里该模型为 `npm: @ai-sdk/openai`；mock 网关的 `provider test` 走通了 Responses 通道 |
 | 5 | `api` 方式必须有非空 Key | ✅ 实测 | magpie 要求提示里有一个非空 Key；插件用哨兵值处理"无密钥网关"（`loopback`）与"自动读凭据"（`auto`），见 README |
 | 6 | 插件 fetch 的 URL 形状 | ✅ 实测 | magpie 拼成 `{baseURL}/chat/completions` 或 `{baseURL}/responses`；插件的路径重建与之兼容（重复 `/v1` 也能纠正） |
 | 7 | 网关管理接口在"无密码 + 回环"时开放 | ✅ 实测 | 空密码网关的 `/admin/api/*` 从回环可直接读；插件因此改为"先试，401/403 再降级" |
-| 8 | **magpie 是否展示 `reasoning`** | ❓ 未验证 | 需要 Agent 侧真实会话观察；若看不到思考，再启用"SSE 行级补 `reasoning_content`"（代码里已留位置，未实现以免重复显示） |
+| 8 | **magpie 是否展示 `reasoning`** | ✅ 实测 | 2026-11-06 晚真实 Agent 会话（`deepseek-v4.1-flash`）：「思考 · 持续 4 秒」块正常渲染 → magpie 原生展示上游 `reasoning`；SSE 行级补写**不需要启用**（预留位置保留，仅备宿主行为变化） |
 | 9 | 浏览器登录 `desktop_auth` 的 `state`/`port` 规则 | ❓ 未验证 | 未做浏览器实登；`localhost` 回调与 code 降级已由单测覆盖 |
 
 ## 5. 真机实测记录（2026-11-06）
@@ -222,6 +222,7 @@ magpie 的 `auth.usage` 约定：
 | 钩子级 smoke（真网关，流式） | 200 `text/event-stream`，4 个 chunk，见到 `[DONE]`；usage/checkin 正常 |
 | 工具调用（直连上游） | `finish_reason: tool_calls`，参数 `{"city":"巴黎"}` |
 | 图片输入（直连上游） | 200，模型回答「鲑鱼色（橙粉色/珊瑚色）」 |
+| Agent 真实会话（`deepseek-v4.1-flash`，2026-11-06 晚） | 正常回复；「思考 · 持续 4 秒」块正常渲染 → magpie 原生展示 `reasoning`（§4 #8） |
 
 **额度口径实测**：免费模型（`theosPerRequest: "0"`）的响应里 `cost` 为 0；200 Theos 是 premier 模型的额度，
 所以本轮回测没有消耗 Theos。
@@ -235,7 +236,6 @@ magpie 的 `auth.usage` 约定：
 | # | 未验证项 | 现有处理 | 验证方式 |
 |---|---|---|---|
 | 1 | 浏览器登录 `desktop_auth` 的 `state`/`port` 校验规则（上游是否接受任意回环端口、回调是否带 state） | 回调"有 state 就校验、没有就只认路径与一次性端口"；监听失败或超时降级为粘贴 `code` | 真机走一次浏览器登录 |
-| 2 | magpie 是否把 `reasoning` 透传给 Agent | 先原样透传；若 Agent 看不到思考 → 在 fetch 里做 SSE 行级补 `reasoning_content` | 真机对话 + 看 Agent 输出 |
 
 ---
 
