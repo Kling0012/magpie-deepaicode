@@ -71,7 +71,7 @@ Pass as the plugin's `options` (Plugins → installed → options, or
 | Option | Default | Meaning |
 |---|---|---|
 | `baseOrigin` | `https://api.deepai.org` | upstream origin |
-| `laneVersion` | `"4"` | `X-DeepAI-Code-Theos` lane; `"2"` was rejected upstream on 2026-11-07 (426 on every endpoint) |
+| `laneVersion` | `"auto"` | probe `/models` (unauthenticated) top-down and use the highest accepted lane; set an explicit value like `"4"` to pin it |
 | `secretDir` | `""` | desktop credentials dir (empty = auto-detect) |
 | `lang` | `zh` | UI language (`zh` \| `en`) |
 | `debug` | `false` | verbose `console.error` logging — field **names** only, never values |

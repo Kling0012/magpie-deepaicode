@@ -13,7 +13,7 @@ import {
   HEADER_MACHINE,
   RETRY_AFTER_CAP_S,
 } from "./constants.mjs";
-import { directBase, directHeaders } from "./direct.mjs";
+import { directBase, directHeaders, resolveLaneVersion } from "./direct.mjs";
 import { t, resolveLang } from "./i18n.mjs";
 import { resolveAccountSettings } from "./modes.mjs";
 
@@ -112,8 +112,10 @@ export async function guardResponse(res) {
  * 本函数只做“准备”，真正的请求在 loader.fetch 里发。
  * 所有请求的 URL 都从配置的基地址重建，凭据只可能发往配置的上游。
  */
-export function createLoader(auth, options = {}, { fetchImpl = globalThis.fetch } = {}) {
-  const settings = resolveAccountSettings(auth, options);
+export async function createLoader(auth, options = {}, { fetchImpl = globalThis.fetch } = {}) {
+  let settings = resolveAccountSettings(auth, options);
+  // laneVersion 为 auto 时先探测出实际值（进程内缓存，只发生一次）。
+  settings = { ...settings, laneVersion: await resolveLaneVersion(settings.origin, { laneVersion: settings.laneVersion, machineFp: settings.machineFp, fetchImpl }) };
   const targets = loaderTargets(settings);
   const headers = modeHeaders(settings);
   const lang = resolveLang(options);

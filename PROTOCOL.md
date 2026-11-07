@@ -56,6 +56,11 @@
 > "`2` 全线 426" 也是在同一污染条件下测得（`user-agent: node` + lane 2 的组合）。
 > 设 UA 后 lane 2/4 在 chat 上都 200——车道头以桌面端为准用 `4`，不依赖这个巧合。
 
+> **车道自动探测（2026-11-07 实测）**：`/models` 对车道值做白名单校验
+>（`2`/`4` → 200，`5`/`99`/`abc` → 426），且免鉴权、无签到副作用——插件因此把
+> `laneVersion` 默认设为 `auto`：从 12 降序探测 `/models`，取最大受理值并进程内缓存
+>（上游升级车道后无需改选项）。426 body 不携带期望值，无法从错误响应里直接学到。
+
 **机器指纹的策略（0.2.0）**：指纹取真实设备标识——Windows 为
 SMBIOS `Win32_ComputerSystemProduct.UUID`（回落 `MachineGuid`）、macOS 为
 `IOPlatformUUID`、Linux 为 `product_uuid` / `/etc/machine-id`；哈希方式与桌面端一致

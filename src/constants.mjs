@@ -17,8 +17,12 @@ export const DEFAULT_BASE_ORIGIN = "https://api.deepai.org";
 /** 直连模式在 origin 下的路径前缀。 */
 export const DIRECT_MODEL_BASE = "/deepai_code";
 
-/** Theos billing lane version; unknown values will get a 426 from upstream. Aligned with current desktop-side server.asar (2026-11-07 source-level). */
+/** Theos 计费车道版本；未知值会 426。对齐当前桌面端 server.asar（2026-11-07 源码级）。 */
 export const DEFAULT_LANE_VERSION = "4";
+/** laneVersion 选项的自动值：降序探测 /models（免鉴权）取最大受理值，进程内缓存。 */
+export const AUTO_LANE_VERSION = "auto";
+/** 自动探测的上限车道号（从该值降到 1）。 */
+export const LANE_PROBE_MAX = 12;
 
 export const HEADER_KEY = "Api-Key";
 export const HEADER_LANE = "X-DeepAI-Code-Theos";
@@ -64,7 +68,7 @@ export const FALLBACK_SNAPSHOT_DATE = "2026-11-06";
 
 export const DEFAULT_OPTIONS = {
   baseOrigin: DEFAULT_BASE_ORIGIN,
-  laneVersion: DEFAULT_LANE_VERSION,
+  laneVersion: AUTO_LANE_VERSION,
   /** 界面语言：zh | en */
   lang: "zh",
   /** 桌面端凭据目录（留空自动探测） */

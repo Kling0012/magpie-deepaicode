@@ -7,8 +7,8 @@
 //
 // 额外坑：无效 Key 会 302 到登录页 → 所有请求都要 redirect: "error"。
 
-import { fetchJson } from "./http.mjs";
 import {
+  AUTO_LANE_VERSION,
   DEFAULT_BASE_ORIGIN,
   DEFAULT_LANE_VERSION,
   HEADER_BEACON,
@@ -16,9 +16,11 @@ import {
   HEADER_KEY,
   HEADER_LANE,
   HEADER_MACHINE,
+  LANE_PROBE_MAX,
   USER_AGENT,
   VERSION,
 } from "./constants.mjs";
+import { HttpError, fetchJson } from "./http.mjs";
 import { randomBytes } from "node:crypto";
 import { parseResetTime, trimSlash } from "./util.mjs";
 
@@ -57,6 +59,39 @@ export function directHeaders({ key = "", machineFp = "", laneVersion = DEFAULT_
   return headers;
 }
 
+/** 自动探测结果（每进程缓存一次）。测试可重置。 */
+let cachedAutoLane = "";
+export function resetAutoLaneCache() {
+  cachedAutoLane = "";
+}
+
+/**
+ * 解析实际使用的车道版本：
+ *   - 显式值（"4" 等）：原样返回，用户说了算。
+ *   - AUTO_LANE_VERSION：降序探测 /models（免鉴权、无签到副作用），
+ *     取最大受理值并缓存；全部失败时退回 DEFAULT_LANE_VERSION。
+ * 网络错误原样抛出（探测只在 426 时继续尝试下一个候选）。
+ */
+export async function resolveLaneVersion(
+  origin,
+  { laneVersion = AUTO_LANE_VERSION, machineFp = "", fetchImpl = globalThis.fetch } = {},
+) {
+  const want = String(laneVersion || DEFAULT_LANE_VERSION).trim();
+  if (want !== AUTO_LANE_VERSION) return want;
+  if (cachedAutoLane) return cachedAutoLane;
+  for (let lane = LANE_PROBE_MAX; lane >= 1; lane--) {
+    try {
+      await getDirectModels(origin, { machineFp, laneVersion: String(lane), fetchImpl, timeoutMs: 10_000 });
+      cachedAutoLane = String(lane);
+      return cachedAutoLane;
+    } catch (err) {
+      if (err instanceof HttpError && err.status === 426) continue;
+      throw err;
+    }
+  }
+  return DEFAULT_LANE_VERSION;
+}
+
 /** GET /deepai_code/models（免鉴权；只需要车道头与机器指纹）。 */
 export async function getDirectModels(
   origin,
@@ -74,7 +109,8 @@ export async function getTheos(
   origin,
   { key, machineFp = "", laneVersion = DEFAULT_LANE_VERSION, fetchImpl = globalThis.fetch, timeoutMs = 15_000 } = {},
 ) {
-  const headers = directHeaders({ key, machineFp, laneVersion });
+  const lane = await resolveLaneVersion(origin, { laneVersion, machineFp, fetchImpl });
+  const headers = directHeaders({ key, machineFp, laneVersion: lane });
   // 桌面端的 /theos 每次都带信标头（lane 4 客户端身份的一部分）。
   headers[HEADER_BEACON] = beaconValue();
   return fetchJson(`${directBase(origin)}/theos`, {
@@ -89,7 +125,8 @@ export async function getUsageSummary(
   origin,
   { key, machineFp = "", laneVersion = DEFAULT_LANE_VERSION, fetchImpl = globalThis.fetch, timeoutMs = 15_000 } = {},
 ) {
-  const headers = directHeaders({ key, machineFp, laneVersion });
+  const lane = await resolveLaneVersion(origin, { laneVersion, machineFp, fetchImpl });
+  const headers = directHeaders({ key, machineFp, laneVersion: lane });
   // 参考实现查用量时用 UA "DeepAI-Code"；我们保持自己的可辨识 UA，避免冒充桌面端。
   return fetchJson(`${directOrigin(origin)}/get_usage_summary`, { fetchImpl, headers, timeoutMs });
 }

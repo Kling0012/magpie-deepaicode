@@ -8,6 +8,8 @@ import {
   getDirectModels,
   getTheos,
   normalizeAllowance,
+  resolveLaneVersion,
+  resetAutoLaneCache,
 } from "../src/direct.mjs";
 import { buildDirectCheckin, buildDirectUsage } from "../src/usage.mjs";
 
@@ -141,4 +143,43 @@ test("exchangeCode：成功与坏响应", async () => {
     /invalid-exchange-response/,
   );
   await assert.rejects(exchangeCode("https://api.deepai.org", "  ", { fetchImpl: async () => jsonResponse({}) }), /empty-code/);
+});
+
+test("resolveLaneVersion：显式值原样返回，auto 降序探测取最大受理值", async () => {
+  resetAutoLaneCache();
+  // 显式值不探测
+  assert.equal(await resolveLaneVersion("https://api.deepai.org", { laneVersion: "3", fetchImpl: async () => { throw new Error("不应发请求"); } }), "3");
+
+  // auto：>4 一律 426，<=4 返回 200 → 应选中 "4"（最大受理值）
+  const seen = [];
+  const lane = await resolveLaneVersion("https://api.deepai.org", {
+    laneVersion: "auto",
+    fetchImpl: async (url, init) => {
+      const v = init.headers["X-DeepAI-Code-Theos"];
+      seen.push(v);
+      return Number(v) > 4
+        ? jsonResponse({ error: { message: "unsupported" } }, 426)
+        : jsonResponse({ models: [] });
+    },
+  });
+  assert.equal(lane, "4");
+  assert.deepEqual(seen, ["12", "11", "10", "9", "8", "7", "6", "5", "4"]);
+});
+
+test("resolveLaneVersion：全部 426 退回默认值；非 426 错误原样抛出", async () => {
+  resetAutoLaneCache();
+  assert.equal(
+    await resolveLaneVersion("https://api.deepai.org", {
+      laneVersion: "auto",
+      fetchImpl: async () => jsonResponse({ error: { message: "unsupported" } }, 426),
+    }),
+    "4",
+  );
+  await assert.rejects(
+    resolveLaneVersion("https://api.deepai.org", {
+      laneVersion: "auto",
+      fetchImpl: async () => jsonResponse({ error: { message: "boom" } }, 500),
+    }),
+    /HTTP 500/,
+  );
 });

@@ -28,8 +28,8 @@ test("normalizeIncomingUrl：直连模式归一到 /deepai_code/{chat,responses}
   );
 });
 
-test("createLoader：直连 baseURL 与头（不带 apiKey/Authorization）", () => {
-  const direct = createLoader(directAuth(), {});
+test("createLoader：直连 baseURL 与头（不带 apiKey/Authorization）", async () => {
+  const direct = await createLoader(directAuth(), { laneVersion: "4" });
   assert.equal(direct.baseURL, "https://api.deepai.org/deepai_code");
   assert.equal(direct.apiKey, undefined);
   assert.equal(direct.headers["Api-Key"], directAuth().key);
@@ -41,7 +41,7 @@ test("createLoader：直连 baseURL 与头（不带 apiKey/Authorization）", ()
 
 test("loader.fetch：直连注入 Api-Key / 车道 / 机器指纹", async () => {
   let captured = null;
-  const loader = createLoader(directAuth(), {}, {
+  const loader = await createLoader(directAuth(), { laneVersion: "4" }, {
     fetchImpl: async (url, init) => {
       captured = { url, headers: init.headers };
       return new Response("{}", { status: 200 });
@@ -58,7 +58,7 @@ test("loader.fetch：直连注入 Api-Key / 车道 / 机器指纹", async () => 
 
 test("loader.fetch：目标 URL 一律从配置基地址重建（凭据不发往外域）", async () => {
   let captured = null;
-  const loader = createLoader(directAuth(), { baseOrigin: "https://api.deepai.org" }, {
+  const loader = await createLoader(directAuth(), { baseOrigin: "https://api.deepai.org", laneVersion: "4" }, {
     fetchImpl: async (url, init) => {
       captured = { url, headers: init.headers, redirect: init.redirect };
       return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
@@ -100,7 +100,7 @@ test("guardResponse：403 email_unverified 标记登录失效", async () => {
 });
 
 test("loader.fetch：302（redirect:error）→ 401 且文案可读", async () => {
-  const loader = createLoader(directAuth(), {}, {
+  const loader = await createLoader(directAuth(), { laneVersion: "4" }, {
     fetchImpl: async () => {
       throw new TypeError("fetch failed: unexpected redirect");
     },

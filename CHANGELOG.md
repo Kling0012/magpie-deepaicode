@@ -13,6 +13,10 @@
 - 桌面端对齐头：`X-DeepAI-Code-Instance`（每进程随机 32 hex）与 `/theos` 的
   `X-DeepAI-Code-Beacon`（`v=版本;up=运行秒;pi;focus`）。实测非必需，带上无害。
 - PROTOCOL.md §1.2/§1.3 记录完整因果链与两条新错误语义；测试 54 → 55。
+- `laneVersion` 默认改为 `"auto"`：降序探测 `/models`（免鉴权、无签到副作用、对
+  车道值做白名单校验）取最大受理值，进程内缓存一次——上游再升车道时插件自动
+  跟进，无需改选项。显式值（如 `"4"`）仍然生效且不探测。
+  E2E（2026-11-07）：auto 解析出 `4`，chat 200 "ok"。
 - 端到端验证（2026-11-07 本机）：models 200（18 个，免费 9）；loader chat 200
   SSE 流式 `[DONE]`；`/theos` 200（granted=50）。
 
