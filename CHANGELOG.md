@@ -1,5 +1,21 @@
 # Changelog
 
+## 未发布 — 2026-11-07（上游客户端过滤适配）
+
+- **根因修复：显式 `User-Agent`**。上游 2026-11-07 上线 UA 侧客户端过滤：Node 宿主
+  undici fetch 默认发 `user-agent: node`，`/chat/completions` 直接
+  `400 "This request is not one DeepAI Code sends."`（Node 20 与 Node 24 宿主均命中；
+  Bun 宿主自带 UA、curl、Electron net 栈不受影响）。插件现在在所有直连请求上
+  显式发送 `magpie-deepaicode/<version>`。
+- `DEFAULT_LANE_VERSION` 改为 `"4"`（与桌面端 `server.asar` 的 `DEEPAI_LANE_HEADERS`
+  对齐）。注：早前 "`2` 全线 426" 的观察是在 `user-agent: node` 污染下测得；
+  设 UA 后 lane 2/4 在 chat 上均 200，车道值仍以桌面端为准。
+- 桌面端对齐头：`X-DeepAI-Code-Instance`（每进程随机 32 hex）与 `/theos` 的
+  `X-DeepAI-Code-Beacon`（`v=版本;up=运行秒;pi;focus`）。实测非必需，带上无害。
+- PROTOCOL.md §1.2/§1.3 记录完整因果链与两条新错误语义；测试 54 → 55。
+- 端到端验证（2026-11-07 本机）：models 200（18 个，免费 9）；loader chat 200
+  SSE 流式 `[DONE]`；`/theos` 200（granted=50）。
+
 ## 0.2.0 — 2026-11-07
 
 按 magpie 社区收录要求（PR #805 审查意见）做出的重要变更：

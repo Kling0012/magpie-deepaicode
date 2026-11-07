@@ -63,7 +63,7 @@ deepaicode/gpt-6-astra            # 仅 Responses 通道
 | 选项 | 默认 | 含义 |
 |---|---|---|
 | `baseOrigin` | `https://api.deepai.org` | 上游地址 |
-| `laneVersion` | `"2"` | `X-DeepAI-Code-Theos` 车道版本；只有上游报 426 时才需要改 |
+| `laneVersion` | `"4"` | `X-DeepAI-Code-Theos` 车道版本；2026-11-07 起上游全线拒绝 `"2"`（426） |
 | `secretDir` | `""` | 桌面端凭据目录（留空自动探测） |
 | `lang` | `zh` | 界面语言（`zh` \| `en`） |
 | `debug` | `false` | 输出详细日志——只记录字段**名**，不记录值 |

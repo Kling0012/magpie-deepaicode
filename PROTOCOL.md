@@ -3,7 +3,7 @@
 本文件记录插件实现所依赖的**上游契约**，以及每条结论的证据等级。
 它替代"每次改动都去翻反编译源码"：实现有疑问时先看这里。
 
-- 快照日期：**2026-11-06**（模型目录同日期）
+- 快照日期：**2026-11-06**（模型目录同日期）；**2026-11-07 补充**：上游升级车道协议（见 §1.2/§1.3 加粗行）
 - 参考实现：[DeepAICode2API](https://github.com/2951461586/DeepAICode2API)（MIT）——上游协议的逆向结论最初来自它的 `internal/deepai/*`、`docs/recon.md`
 - 插件规范：[magpie 插件开发指南](https://usemagpie.ai/docs/zh/plugins)
 
@@ -43,9 +43,18 @@
 | 头 | 值 | 作用 |
 |---|---|---|
 | `Api-Key` | 账号 Key（UUID 形态 `8-4-4-4-12`） | **鉴权走这个头，不是 `Authorization`** |
-| `X-DeepAI-Code-Theos` | `2` | 计费车道版本；不对会 `426` |
+| `User-Agent` | **插件自己的 UA（`magpie-deepaicode/<version>`）** | **必须显式设置（2026-11-07 实测）：Node 宿主 undici fetch 默认发 `user-agent: node`，上游 WAF 对 `/chat/completions` 直接 `400 "This request is not one DeepAI Code sends."`；curl / Bun / 任意非 `node` UA 均放行。桌面端 Electron 的 fetch 走 net 栈（Chrome UA），故不受影响** |
+| `X-DeepAI-Code-Theos` | `4`（2026-11-07 源码级：桌面端 `server.asar` 的 `DEEPAI_LANE_HEADERS`；实测 `4` 全通） | 计费车道版本 |
+| `X-DeepAI-Code-Instance` | 每进程随机 32 hex（同 `DEEPAI_LANE_HEADERS`，桌面端对齐项） | 客户端实例标识；实测非必需，带上与桌面端一致 |
+| `X-DeepAI-Code-Beacon` | `v=<版本>;up=<运行秒>;pi=0\|1;focus=0\|1` | 桌面端 `/theos` 每次必带；实测非必需，带上与桌面端一致 |
+| `X-DeepAI-Code-Check-In` | `/theos` 响应 `check_in.nonce`（32 hex） | 每日额度签到的挑战应答 |
 | `X-DeepAI-Code-Machine` | `sha256(小写原始 UUID)` 十六进制 | 每日免费额度的分配键 |
 | `X-Session-Affinity` | 任意会话 id | 会话粘性（body 的 `prompt_cache_key` 同效） |
+
+> **2026-11-07 排障记录（因果链）**：上游当天上线了 UA 侧客户端过滤。Node undici
+> fetch（默认 `user-agent: node`）在 `/chat/completions` 上必得 400；早前观察到的
+> "`2` 全线 426" 也是在同一污染条件下测得（`user-agent: node` + lane 2 的组合）。
+> 设 UA 后 lane 2/4 在 chat 上都 200——车道头以桌面端为准用 `4`，不依赖这个巧合。
 
 **机器指纹的策略（0.2.0）**：指纹取真实设备标识——Windows 为
 SMBIOS `Win32_ComputerSystemProduct.UUID`（回落 `MachineGuid`）、macOS 为
@@ -61,7 +70,9 @@ SMBIOS `Win32_ComputerSystemProduct.UUID`（回落 `MachineGuid`）、macOS 为
 | `401` | — | 鉴权失败 | 原样 401（magpie 标记账号） |
 | `403` + `email_unverified` | — | 邮箱未验证 | 原样 403 + `X-Magpie-Sign-In: expired` |
 | `426` + `lane_version_unsupported` | — | 车道/指纹问题 | 原样 426，不标记账号 |
-| `400/404/422` | — | 请求本身的问题 | 原样透出 |
+| `400` + `This request is not one DeepAI Code sends.` | 2026-11-07 实测复现并定位 | **`user-agent: node`（undici 默认）被上游 WAF 拦**；与 Instance/Beacon 头无关（逐字节对照排除） | 插件显式发自己的 `User-Agent`（directHeaders 已内置） |
+| `403` + `restarted its check-in too many times` | 2026-11-07 实测 | 当日 `/theos` 签到状态机被打爆（频繁调用） | 次日自动恢复；避免高频轮询 `/theos` |
+| `400`（其它 body）/`404`/`422` | — | 请求本身的问题 | 原样透出 |
 | `302` | 登录页 | 无效 Key | **不跟随**（`redirect: "error"`）→ 转 401 |
 | `5xx` / 网络错误 | — | 抖动 | 原样 / 抛错，交给 magpie |
 

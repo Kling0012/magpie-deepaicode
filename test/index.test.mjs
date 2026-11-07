@@ -65,6 +65,6 @@ test("resolveOptions：magpie options 与显式参数合并、类型收敛", () 
   assert.equal(opts.lang, "en");
   const defaults = resolveOptions({}, {});
   assert.equal(defaults.baseOrigin, "https://api.deepai.org");
-  assert.equal(defaults.laneVersion, "2");
+  assert.equal(defaults.laneVersion, "4");
   assert.equal(defaults.debug, false);
 });

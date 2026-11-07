@@ -6,17 +6,25 @@
 export const PROVIDER = "deepaicode";
 export const VERSION = "0.2.0";
 
+/**
+ * 插件自己的 UA。必须显式发：Node 宿主的 undici fetch 默认 "user-agent: node"，
+ * 上游 WAF 在 /chat/completions 上对其 400（2026-11-07 实测）；Bun/curl/浏览器 UA 均放行。
+ */
+export const USER_AGENT = `magpie-deepaicode/${VERSION}`;
+
 /** 直连上游默认地址。 */
 export const DEFAULT_BASE_ORIGIN = "https://api.deepai.org";
 /** 直连模式在 origin 下的路径前缀。 */
 export const DIRECT_MODEL_BASE = "/deepai_code";
 
-/** Theos 计费车道版本；上游不认会回 426。 */
-export const DEFAULT_LANE_VERSION = "2";
+/** Theos billing lane version; unknown values will get a 426 from upstream. Aligned with current desktop-side server.asar (2026-11-07 source-level). */
+export const DEFAULT_LANE_VERSION = "4";
 
 export const HEADER_KEY = "Api-Key";
 export const HEADER_LANE = "X-DeepAI-Code-Theos";
+export const HEADER_INSTANCE = "X-DeepAI-Code-Instance";
 export const HEADER_MACHINE = "X-DeepAI-Code-Machine";
+export const HEADER_BEACON = "X-DeepAI-Code-Beacon";
 export const HEADER_AFFINITY = "X-Session-Affinity";
 
 /** 桌面端凭据文件名（按优先级）。 */

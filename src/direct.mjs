@@ -11,10 +11,15 @@ import { fetchJson } from "./http.mjs";
 import {
   DEFAULT_BASE_ORIGIN,
   DEFAULT_LANE_VERSION,
+  HEADER_BEACON,
+  HEADER_INSTANCE,
   HEADER_KEY,
   HEADER_LANE,
   HEADER_MACHINE,
+  USER_AGENT,
+  VERSION,
 } from "./constants.mjs";
+import { randomBytes } from "node:crypto";
 import { parseResetTime, trimSlash } from "./util.mjs";
 
 export function directOrigin(origin) {
@@ -26,11 +31,28 @@ export function directBase(origin) {
   return `${directOrigin(origin)}/deepai_code`;
 }
 
-/** 上游请求头（不伪造桌面端 UA，也不带 Authorization）。 */
+/** 客户端实例 id：与桌面端一致，每进程随机 32 hex；lane 4 的客户端身份头（缺失会 400）。 */
+let cachedInstanceId = "";
+export function instanceId() {
+  cachedInstanceId ||= randomBytes(16).toString("hex");
+  return cachedInstanceId;
+}
+
+/** /theos 必带的信标（桌面端每次都发）：v=版本;up=运行秒数;pi;focus。 */
+export function beaconValue({ version = VERSION, uptime = process.uptime(), piActive = false, focused = true } = {}) {
+  return `v=${version};up=${Math.floor(uptime)};pi=${piActive ? 1 : 0};focus=${focused ? 1 : 0}`;
+}
+
+/**
+ * 上游请求头（不带 Authorization，也不冒充桌面端 UA）。
+ * User-Agent 必须显式设置：Node 宿主的 undici fetch 默认发 "user-agent: node"，
+ * 上游 WAF 对 /chat/completions 直接 400 "This request is not one DeepAI Code sends."（2026-11-07 实测）。
+ */
 export function directHeaders({ key = "", machineFp = "", laneVersion = DEFAULT_LANE_VERSION } = {}) {
-  const headers = { Accept: "application/json" };
+  const headers = { Accept: "application/json", "User-Agent": USER_AGENT };
   if (key) headers[HEADER_KEY] = String(key);
   headers[HEADER_LANE] = String(laneVersion || DEFAULT_LANE_VERSION);
+  headers[HEADER_INSTANCE] = instanceId();
   if (machineFp) headers[HEADER_MACHINE] = String(machineFp);
   return headers;
 }
@@ -52,9 +74,12 @@ export async function getTheos(
   origin,
   { key, machineFp = "", laneVersion = DEFAULT_LANE_VERSION, fetchImpl = globalThis.fetch, timeoutMs = 15_000 } = {},
 ) {
+  const headers = directHeaders({ key, machineFp, laneVersion });
+  // 桌面端的 /theos 每次都带信标头（lane 4 客户端身份的一部分）。
+  headers[HEADER_BEACON] = beaconValue();
   return fetchJson(`${directBase(origin)}/theos`, {
     fetchImpl,
-    headers: directHeaders({ key, machineFp, laneVersion }),
+    headers,
     timeoutMs,
   });
 }

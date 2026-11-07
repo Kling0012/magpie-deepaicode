@@ -20,11 +20,19 @@ function jsonResponse(body, status = 200, headers = {}) {
 
 test("directBase / directHeaders：Api-Key 而不是 Authorization", () => {
   assert.equal(directBase("https://api.deepai.org/"), "https://api.deepai.org/deepai_code");
-  const headers = directHeaders({ key: "k", machineFp: "fp", laneVersion: "2" });
+  const headers = directHeaders({ key: "k", machineFp: "fp", laneVersion: "4" });
   assert.equal(headers["Api-Key"], "k");
-  assert.equal(headers["X-DeepAI-Code-Theos"], "2");
+  assert.equal(headers["X-DeepAI-Code-Theos"], "4");
+  assert.match(headers["X-DeepAI-Code-Instance"], /^[0-9a-f]{32}$/);
   assert.equal(headers["X-DeepAI-Code-Machine"], "fp");
   assert.equal(headers.Authorization, undefined);
+  assert.match(headers["User-Agent"], /^magpie-deepaicode\//, "必须显式 UA：undici 默认 user-agent: node 会被上游 400");
+});
+
+test("directHeaders：实例 id 每进程稳定", () => {
+  const a = directHeaders({});
+  const b = directHeaders({});
+  assert.equal(a["X-DeepAI-Code-Instance"], b["X-DeepAI-Code-Instance"]);
 });
 
 test("getDirectModels：免鉴权，只带车道与机器指纹", async () => {
@@ -53,6 +61,7 @@ test("getTheos：URL 与头正确", async () => {
   });
   assert.equal(captured.url, "https://api.deepai.org/deepai_code/theos");
   assert.equal(captured.headers["Api-Key"], "k");
+  assert.match(captured.headers["X-DeepAI-Code-Beacon"], /^v=[^;]+;up=\d+;pi=[01];focus=[01]$/);
 });
 
 test("normalizeAllowance：字符串数值与 refresh_at 归一化", () => {

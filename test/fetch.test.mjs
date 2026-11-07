@@ -33,7 +33,8 @@ test("createLoader：直连 baseURL 与头（不带 apiKey/Authorization）", ()
   assert.equal(direct.baseURL, "https://api.deepai.org/deepai_code");
   assert.equal(direct.apiKey, undefined);
   assert.equal(direct.headers["Api-Key"], directAuth().key);
-  assert.equal(direct.headers["X-DeepAI-Code-Theos"], "2");
+  assert.equal(direct.headers["X-DeepAI-Code-Theos"], "4");
+  assert.match(direct.headers["X-DeepAI-Code-Instance"], /^[0-9a-f]{32}$/);
   assert.ok(direct.headers["X-DeepAI-Code-Machine"]);
   assert.equal(direct.headers.Authorization, undefined);
 });
@@ -49,7 +50,8 @@ test("loader.fetch：直连注入 Api-Key / 车道 / 机器指纹", async () => 
   await loader.fetch("https://api.deepai.org/deepai_code/responses", { method: "POST" });
   assert.equal(captured.url, "https://api.deepai.org/deepai_code/responses");
   assert.equal(captured.headers.get("api-key"), directAuth().key);
-  assert.equal(captured.headers.get("x-deepai-code-theos"), "2");
+  assert.equal(captured.headers.get("x-deepai-code-theos"), "4");
+  assert.match(captured.headers.get("x-deepai-code-instance"), /^[0-9a-f]{32}$/);
   assert.equal(captured.headers.get("authorization"), null);
   assert.ok(captured.headers.get("x-deepai-code-machine"));
 });
